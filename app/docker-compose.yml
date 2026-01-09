@@ -1,0 +1,11 @@
+services:
+  api:
+    build:
+      context: ./app
+    environment:
+      - DATABASE_URL=sqlite:///./data/app.db
+      - LOG_LEVEL=INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app_data:/app/data
