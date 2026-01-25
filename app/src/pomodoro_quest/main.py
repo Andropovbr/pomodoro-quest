@@ -12,9 +12,11 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title=settings.app_name)
 
-    # Phase 0: create tables automatically.
-    # We'll replace this with Alembic migrations when moving to RDS.
-    Base.metadata.create_all(bind=engine)
+    @app.on_event("startup")
+    def on_startup() -> None:
+        # Phase 0: auto-create tables on startup.
+        # We'll replace this with Alembic migrations later.
+        Base.metadata.create_all(bind=engine)
 
     app.include_router(api_router)
     return app

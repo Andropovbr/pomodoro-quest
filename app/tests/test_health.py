@@ -3,7 +3,7 @@ from pomodoro_quest.main import app
 
 
 def test_health_ok():
-    client = TestClient(app)
-    res = client.get("/api/health")
-    assert res.status_code == 200
-    assert res.json()["status"] == "ok"
+    with TestClient(app) as client:
+        res = client.get("/api/health")
+        assert res.status_code == 200
+        assert res.json()["status"] == "ok"

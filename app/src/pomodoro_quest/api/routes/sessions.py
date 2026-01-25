@@ -7,6 +7,10 @@ from pomodoro_quest.db.models import PomodoroSession, SessionMode, SessionStatus
 from pomodoro_quest.db.session import get_db_session
 from pomodoro_quest.services.xp import calculate_xp
 
+from pomodoro_quest.services.demo_user import get_or_create_demo_user
+from pomodoro_quest.db.models import User
+
+
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
@@ -35,7 +39,10 @@ class CompleteSessionResponse(BaseModel):
 
 @router.post("/start", response_model=StartSessionResponse)
 def start_session(payload: StartSessionRequest, db: Session = Depends(get_db_session)) -> StartSessionResponse:
+    user = get_or_create_demo_user(db)
+
     session = PomodoroSession(
+        user_id=user.id,
         mode=payload.mode,
         planned_minutes=payload.planned_minutes,
         status=SessionStatus.running,
@@ -51,6 +58,7 @@ def start_session(payload: StartSessionRequest, db: Session = Depends(get_db_ses
     )
 
 
+
 @router.post("/complete", response_model=CompleteSessionResponse)
 def complete_session(payload: CompleteSessionRequest, db: Session = Depends(get_db_session)) -> CompleteSessionResponse:
     session: PomodoroSession | None = db.get(PomodoroSession, payload.session_id)
@@ -64,11 +72,20 @@ def complete_session(payload: CompleteSessionRequest, db: Session = Depends(get_
     session.status = SessionStatus.completed
     session.completed_at = datetime.now(timezone.utc)
 
+    xp_gained = calculate_xp(session.mode)
+
+    user: User | None = db.get(User, session.user_id)
+    if user is None:
+        # This should not happen. If it does, we have data integrity issues.
+        raise HTTPException(status_code=500, detail="Session owner user not found")
+
+    user.xp += xp_gained
+    user.level = (user.xp // 100) + 1  # level 1: 0-99, level 2: 100-199, etc.
+
     db.add(session)
+    db.add(user)
     db.commit()
     db.refresh(session)
-
-    xp_gained = calculate_xp(session.mode)
 
     return CompleteSessionResponse(
         session_id=session.id,
@@ -76,3 +93,4 @@ def complete_session(payload: CompleteSessionRequest, db: Session = Depends(get_
         completed_at=session.completed_at,
         xp_gained=xp_gained,
     )
+
