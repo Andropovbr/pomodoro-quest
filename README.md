@@ -54,10 +54,21 @@ Although this is a small application, it was designed with operational concerns 
 - Environment-driven configuration (ready for secrets and managed databases)
 - Deterministic startup behavior suitable for containerized deployments (ECS, Kubernetes)
 
+## Future Improvements (SRE Roadmap)
+
+The following improvements are intentionally planned to evolve the project toward a production-grade system:
+
+- Introduce database migrations using Alembic to manage schema evolution safely
+- Replace SQLite with a managed relational database (RDS/PostgreSQL)
+- Add application readiness and liveness probes
+- Introduce CI/CD pipelines with automated tests and image scanning
+- Deploy the application using AWS ECS with Infrastructure as Code (Terraform)
+- Add structured logging and metrics for observability
+
+These items reflect real operational concerns commonly addressed by SRE and DevOps teams.
 
 ## Deployment Notes (future)
 
 ## Local run (Docker)
 ```bash
 docker compose up --build
-
