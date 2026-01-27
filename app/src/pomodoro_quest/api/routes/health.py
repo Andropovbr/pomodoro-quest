@@ -1,24 +1,33 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from pomodoro_quest.db.session import get_db_session
 
-router = APIRouter()
+router = APIRouter(prefix="/health", tags=["health"])
 
 
-@router.get("/health", tags=["health"])
-def health_check(db: Session = Depends(get_db_session)) -> dict:
+@router.get("/live")
+def liveness() -> dict:
     """
-    Health endpoint for ALB target group checks.
+    Liveness probe.
 
-    This is intentionally lightweight:
-    - If the database is reachable, return status=ok.
-    - If the database is not reachable, return status=degraded (do not crash).
+    Indicates whether the application process is running.
+    This endpoint must NOT depend on external services.
+    """
+    return {"status": "alive"}
+
+
+@router.get("/ready")
+def readiness(db: Session = Depends(get_db_session)) -> dict:
+    """
+    Readiness probe.
+
+    Indicates whether the application is ready to receive traffic.
+    This checks critical dependencies such as the database.
     """
     try:
         db.execute(text("SELECT 1"))
-        return {"status": "ok"}
+        return {"status": "ready"}
     except Exception:
-        # Avoid leaking internal errors here; logs can capture details later.
-        return {"status": "degraded", "db": "unavailable"}
+        return {"status": "not_ready"}
