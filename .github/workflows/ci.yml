@@ -33,15 +33,34 @@ jobs:
         run: |
           pytest -q
 
-  docker-build:
-    name: Docker build validation
+  docker-build-and-push:
+    name: Docker build & push to ECR
     runs-on: ubuntu-latest
     needs: tests
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build Docker image
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::792025037142:role/pomodoro-quest-github-actions
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        env:
+          ECR_URL: 792025037142.dkr.ecr.us-east-1.amazonaws.com/pomodoro-quest
+          ECR_REPOSITORY: pomodoro-quest
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t pomodoro-quest:ci .
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_URL:$IMAGE_TAG
+          docker push $ECR_URL:$IMAGE_TAG
+
