@@ -34,12 +34,21 @@ jobs:
           pytest -q
 
   docker-build-and-push:
-    name: Docker build & push to ECR
+    name: Docker build, push & deploy to ECS
     runs-on: ubuntu-latest
     needs: tests
     permissions:
       id-token: write
       contents: read
+
+    env:
+      AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "792025037142"
+      ECR_REPOSITORY: pomodoro-quest
+      ECR_URL: 792025037142.dkr.ecr.us-east-1.amazonaws.com/pomodoro-quest
+      ECS_CLUSTER: pomodoro-quest-dev-cluster
+      ECS_SERVICE: pomodoro-quest-dev-service
+      ECS_TASK_FAMILY: pomodoro-quest-dev-task
 
     steps:
       - name: Checkout
@@ -55,12 +64,96 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push image
-        env:
-          ECR_URL: 792025037142.dkr.ecr.us-east-1.amazonaws.com/pomodoro-quest
-          ECR_REPOSITORY: pomodoro-quest
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_URL:$IMAGE_TAG
-          docker push $ECR_URL:$IMAGE_TAG
+          IMAGE_TAG="${GITHUB_SHA}"
+          docker build -t "${ECR_REPOSITORY}:${IMAGE_TAG}" .
+          docker tag "${ECR_REPOSITORY}:${IMAGE_TAG}" "${ECR_URL}:${IMAGE_TAG}"
+          docker push "${ECR_URL}:${IMAGE_TAG}"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
 
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Resolve ECS task family from service
+        run: |
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --region "${AWS_REGION}" \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          ECS_TASK_FAMILY=$(aws ecs describe-task-definition \
+            --region "${AWS_REGION}" \
+            --task-definition "${TASK_DEF_ARN}" \
+            --query 'taskDefinition.family' \
+            --output text)
+
+          echo "ECS_TASK_FAMILY=${ECS_TASK_FAMILY}" >> $GITHUB_ENV
+      
+      - name: Register new task definition revision
+        run: |
+          # Fetch current task definition
+          aws ecs describe-task-definition \
+            --task-definition "${ECS_TASK_FAMILY}" \
+            --query taskDefinition \
+            --output json > task-def.json
+
+          # Create a sanitized task definition payload and update the image
+          jq \
+            --arg IMAGE "${ECR_URL}:${IMAGE_TAG}" \
+            'del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy
+            )
+            | .containerDefinitions[0].image = $IMAGE' \
+            task-def.json > new-task-def.json
+
+          # Register new revision
+          aws ecs register-task-definition \
+            --cli-input-json file://new-task-def.json
+
+      - name: Update ECS service (force new deployment)
+        run: |
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${ECS_SERVICE}" \
+            --force-new-deployment
+
+      - name: Wait for service stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}"
+
+      - name: Resolve ALB DNS from ECS service
+        run: |
+          TG_ARN=$(aws ecs describe-services \
+            --region "${AWS_REGION}" \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${ECS_SERVICE}" \
+            --query 'services[0].loadBalancers[0].targetGroupArn' \
+            --output text)
+
+          LB_ARN=$(aws elbv2 describe-target-groups \
+            --region "${AWS_REGION}" \
+            --target-group-arns "${TG_ARN}" \
+            --query 'TargetGroups[0].LoadBalancerArns[0]' \
+            --output text)
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --region "${AWS_REGION}" \
+            --load-balancer-arns "${LB_ARN}" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+
+          echo "ALB_DNS=${ALB_DNS}" >> $GITHUB_ENV
+
+      - name: Smoke test
+        run: |
+          curl -f "http://${ALB_DNS}/api/health/ready"
